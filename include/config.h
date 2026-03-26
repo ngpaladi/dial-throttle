@@ -27,6 +27,29 @@ static const int ENCODER_SPEED_STEP = 1;
 static const int ENCODER_DIRECTION_SIGN = 1;
 // Extra counts required beyond step boundary before direction change is accepted.
 static const int ENCODER_HYSTERESIS_COUNTS = 1;
+// Velocity-dependent acceleration: quick spins apply larger speed deltas.
+static const uint32_t ENCODER_FAST_WINDOW_MS = 28;
+static const uint32_t ENCODER_MEDIUM_WINDOW_MS = 65;
+static const int ENCODER_FAST_MULTIPLIER = 4;
+static const int ENCODER_MEDIUM_MULTIPLIER = 2;
+// Anti-jitter filtering for light single-finger scrolling.
+static const uint32_t ENCODER_STEP_DEBOUNCE_MS = 4;
+static const uint8_t ENCODER_DIR_CHANGE_CONFIRM_STEPS = 2;
+static const int ENCODER_MAX_STEPS_PER_UPDATE = 4;
+static const int ENCODER_REVERSAL_RAW_THRESHOLD = 5;
+// Adaptive feel: relax filtering and allow larger bursts at higher spin rates.
+static const int ENCODER_FAST_EXTRA_STEPS = 3;
+static const int ENCODER_MEDIUM_EXTRA_STEPS = 1;
+// Speed-adaptive scaling: as current speed rises, each accepted step moves farther.
+// Use smooth piecewise linear interpolation instead of hard thresholds.
+static const int ENCODER_SPEED_SCALING_LOW = 30;    // Below this, no bonus
+static const int ENCODER_SPEED_SCALING_MID = 60;    // Ramp +0.5 bonus here
+static const int ENCODER_SPEED_SCALING_HIGH = 100;  // At this+, full +1 bonus at mid, +2 at high
+// Legacy thresholds (kept for reference, now superseded by smooth curve):
+static const int ENCODER_SPEED_STEP_THRESHOLD_MID = 40;
+static const int ENCODER_SPEED_STEP_THRESHOLD_HIGH = 85;
+static const int ENCODER_SPEED_STEP_BONUS_MID = 1;
+static const int ENCODER_SPEED_STEP_BONUS_HIGH = 2;
 
 // Touch brake behavior (press and hold to brake, release to recover).
 static const uint32_t BRAKE_TICK_MS = 40;
@@ -36,6 +59,23 @@ static const uint32_t BRAKE_TOUCH_DEBOUNCE_MS = 120;
 
 // Debug mode: print outgoing WiThrottle lines to Serial only, do not send over WiFi.
 static const bool SERIAL_OUTPUT_ONLY = false;
+
+// UI layout: position of function icon columns (tighter spacing for balanced visual)
+static const int16_t UI_FN_LEFT_X = 48;   // Left column x-position
+static const int16_t UI_FN_RIGHT_X = 192; // Right column x-position
+
+// Power saving (useful for rechargeable battery operation).
+static const uint8_t DISPLAY_BRIGHTNESS_ACTIVE = 72;
+static const uint8_t DISPLAY_BRIGHTNESS_DIM = 8;
+static const uint32_t DISPLAY_DIM_AFTER_MS = 8000;
+static const uint32_t DISPLAY_OFF_AFTER_MS = 20000;
+static const bool ENABLE_WIFI_MODEM_SLEEP = true;
+static const bool ENABLE_WIFI_LOW_TX_POWER = true;
+static const bool ENABLE_WIFI_POWER_GATING_WHEN_DISPLAY_OFF = true;
+static const uint16_t CPU_FREQ_MHZ = 80;
+static const uint16_t LOOP_DELAY_ACTIVE_MS = 8;
+static const uint16_t LOOP_DELAY_DIM_MS = 25;
+static const uint16_t LOOP_DELAY_OFF_MS = 80;
 
 // RFID tag to locomotive mapping.
 // UID must be uppercase hex without separators, e.g. "04A1B2C3D4".
