@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <MySQL_Connection.h>
+#include <MySQL_Cursor.h>
 #include <math.h>
 #include <M5Dial.h>
 #include <WiFi.h>
@@ -973,7 +975,124 @@ void handleKeypad() {
   }
 }
 
-bool resolveRfidLoco(const String& uidHex, uint16_t& outAddress, bool& outIsLong) {
+bool parseLocoIdString(const String& rawLocoId, uint16_t& outAddress, bool& outIsLong) {
+  String text = rawLocoId;
+  text.trim();
+  text.toUpperCase();
+  if (text.isEmpty()) {
+    return false;
+  }
+
+  bool hasTypePrefix = false;
+  bool parsedIsLong = false;
+  if (text[0] == 'S' || text[0] == 'L') {
+    hasTypePrefix = true;
+    parsedIsLong = (text[0] == 'L');
+    text = text.substring(1);
+    text.trim();
+  }
+
+  if (text.isEmpty()) {
+    return false;
+  }
+  for (size_t i = 0; i < text.length(); ++i) {
+    if (!isDigit(text[i])) {
+      return false;
+    }
+  }
+
+  const long addr = text.toInt();
+  if (addr <= 0 || addr > 9999) {
+    return false;
+  }
+
+  outAddress = static_cast<uint16_t>(addr);
+  outIsLong = hasTypePrefix ? parsedIsLong : (outAddress > 127);
+  return true;
+}
+
+bool parseMysqlBoolField(const char* value, bool& outValue) {
+  if (value == nullptr) {
+    return false;
+  }
+
+  String text(value);
+  text.trim();
+  text.toLowerCase();
+  if (text == "1" || text == "true" || text == "t" || text == "yes" || text == "y" || text == "long" ||
+      text == "l") {
+    outValue = true;
+    return true;
+  }
+  if (text == "0" || text == "false" || text == "f" || text == "no" || text == "n" || text == "short" ||
+      text == "s") {
+    outValue = false;
+    return true;
+  }
+  return false;
+}
+
+bool lookupRfidLocoMysql(const String& uidHex, uint16_t& outAddress, bool& outIsLong) {
+  if (!ENABLE_RFID_MYSQL_LOOKUP || SERIAL_OUTPUT_ONLY || WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  IPAddress dbHost;
+  if (!dbHost.fromString(RFID_MYSQL_HOST)) {
+    Serial.println("RFID DB lookup skipped: RFID_MYSQL_HOST must be an IP address");
+    return false;
+  }
+
+  WiFiClient mysqlClient;
+  MySQL_Connection mysqlConn((Client*)&mysqlClient);
+
+  if (!mysqlConn.connect(dbHost, RFID_MYSQL_PORT, const_cast<char*>(RFID_MYSQL_USER),
+                         const_cast<char*>(RFID_MYSQL_PASS))) {
+    Serial.println("RFID DB lookup failed: MySQL connect failed");
+    return false;
+  }
+
+  bool found = false;
+  bool parsed = false;
+  bool parsedLongOverride = false;
+  char query[320] = {0};
+
+  if (RFID_MYSQL_IS_LONG_COLUMN != nullptr) {
+    snprintf(query, sizeof(query), "SELECT %s, %s FROM %s.%s WHERE %s='%s' LIMIT 1", RFID_MYSQL_LOCO_COLUMN,
+             RFID_MYSQL_IS_LONG_COLUMN, RFID_MYSQL_DB, RFID_MYSQL_TABLE, RFID_MYSQL_UID_COLUMN, uidHex.c_str());
+  } else {
+    snprintf(query, sizeof(query), "SELECT %s FROM %s.%s WHERE %s='%s' LIMIT 1", RFID_MYSQL_LOCO_COLUMN,
+             RFID_MYSQL_DB, RFID_MYSQL_TABLE, RFID_MYSQL_UID_COLUMN, uidHex.c_str());
+  }
+
+  MySQL_Cursor cursor(&mysqlConn);
+  if (cursor.execute(query)) {
+    cursor.get_columns();
+    row_values* row = cursor.get_next_row();
+    if (row != nullptr && row->values != nullptr && row->values[0] != nullptr) {
+      found = true;
+      parsed = parseLocoIdString(String(row->values[0]), outAddress, outIsLong);
+      if (parsed && RFID_MYSQL_IS_LONG_COLUMN != nullptr && row->values[1] != nullptr) {
+        parsedLongOverride = parseMysqlBoolField(row->values[1], outIsLong);
+      }
+    }
+  } else {
+    Serial.println("RFID DB lookup failed: query execution error");
+  }
+
+  mysqlConn.close();
+
+  if (found && !parsed) {
+    Serial.println("RFID DB lookup found row, but loco_id was invalid");
+    return false;
+  }
+  if (found && RFID_MYSQL_IS_LONG_COLUMN != nullptr && !parsedLongOverride) {
+    Serial.println("RFID DB lookup note: invalid is_long value, derived from address/type");
+  }
+  return found && parsed;
+}
+
+bool lookupRfidLocoLocalMap(const String& uidHex, uint16_t& outAddress, bool& outIsLong) {
   for (size_t i = 0; i < (sizeof(RFID_LOCO_MAP) / sizeof(RFID_LOCO_MAP[0])); ++i) {
     if (uidHex.equalsIgnoreCase(RFID_LOCO_MAP[i].uidHex)) {
       outAddress = RFID_LOCO_MAP[i].address;
@@ -981,15 +1100,29 @@ bool resolveRfidLoco(const String& uidHex, uint16_t& outAddress, bool& outIsLong
       return true;
     }
   }
-
-  // Fallback: deterministic UID -> address conversion for unmapped tags.
-  uint32_t hash = 0;
-  for (size_t i = 0; i < uidHex.length(); ++i) {
-    hash = (hash * 33u) ^ static_cast<uint8_t>(uidHex[i]);
-  }
-  outAddress = static_cast<uint16_t>((hash % 9999u) + 1u);
-  outIsLong = outAddress > 127;
   return false;
+}
+
+void deriveRfidLocoFromUidTail(const String& uidHex, uint16_t& outAddress, bool& outIsLong) {
+  const int start = uidHex.length() > 4 ? uidHex.length() - 4 : 0;
+  const String tailHex = uidHex.substring(start);
+  const uint32_t raw = static_cast<uint32_t>(strtoul(tailHex.c_str(), nullptr, 16));
+  const uint16_t normalized = static_cast<uint16_t>(((raw == 0 ? 1u : raw) - 1u) % 9999u + 1u);
+  outAddress = normalized;
+  outIsLong = outAddress > 127;
+}
+
+String resolveRfidLoco(const String& uidHex, uint16_t& outAddress, bool& outIsLong) {
+  if (lookupRfidLocoMysql(uidHex, outAddress, outIsLong)) {
+    return "db";
+  }
+
+  if (lookupRfidLocoLocalMap(uidHex, outAddress, outIsLong)) {
+    return "map";
+  }
+
+  deriveRfidLocoFromUidTail(uidHex, outAddress, outIsLong);
+  return "tail";
 }
 
 void handleRfid() {
@@ -1017,11 +1150,18 @@ void handleRfid() {
 
   uint16_t mappedAddress = 0;
   bool mappedIsLong = false;
-  const bool mapped = resolveRfidLoco(uid, mappedAddress, mappedIsLong);
+  const String source = resolveRfidLoco(uid, mappedAddress, mappedIsLong);
 
   Serial.printf("RFID UID %s -> %s%u (%s)\n", uid.c_str(), mappedIsLong ? "L" : "S", mappedAddress,
-                mapped ? "mapped" : "derived");
-  setActiveLoco(mappedAddress, mappedIsLong, true, mapped ? "RFID" : "RFID*" );
+                source.c_str());
+
+  String selectionSource = "RFID-TAIL";
+  if (source == "db") {
+    selectionSource = "RFID-DB";
+  } else if (source == "map") {
+    selectionSource = "RFID-MAP";
+  }
+  setActiveLoco(mappedAddress, mappedIsLong, true, selectionSource);
   M5Dial.Rfid.PICC_HaltA();
 }
 

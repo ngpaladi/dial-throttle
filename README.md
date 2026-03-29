@@ -66,6 +66,64 @@ pio run -t upload
 pio device monitor -b 115200
 ```
 
+## Interactive Installer (Recommended)
+
+For less technical users, use the guided installer script.
+
+Linux/macOS:
+
+```bash
+./install.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\install.ps1
+```
+
+Windows Command Prompt:
+
+```bat
+install.bat
+```
+
+For unattended installs (clubs/events), you can run non-interactive mode:
+
+```bash
+./install.sh --yes --port /dev/ttyACM0 --no-monitor
+```
+
+Windows unattended example:
+
+```powershell
+.\install.ps1 --yes --port COM3 --no-monitor
+```
+
+Useful flags:
+
+- `--yes` / `-y`: assume yes to prompts
+- `--port <path>`: choose port without prompts
+- `--monitor` / `--no-monitor`: force serial monitor behavior after flashing
+- `--edit-config` / `--no-edit-config`: force config editor behavior
+- `--help`: show all options
+
+The installer will:
+
+- Check/install PlatformIO Core (`pio`)
+- Optionally let you edit `include/config.h`
+- Detect connected serial ports and ask you to choose one
+- Build firmware and upload to the selected M5Stack Dial
+- Optionally open serial monitor after flashing
+
+If your board does not appear or upload fails on Linux, you may need serial permissions:
+
+```bash
+sudo usermod -aG dialout "$USER"
+```
+
+Then log out and back in.
+
 ## Key Mapping (Qwiic Numpad)
 
 - `0` -> Toggle `F0`
@@ -113,6 +171,54 @@ Tune these values in `include/config.h`:
 - `DISPLAY_DIM_AFTER_MS`
 - `DISPLAY_OFF_AFTER_MS`
 - `ENABLE_WIFI_MODEM_SLEEP`
+
+## RFID Lookup Order
+
+RFID tag selection now resolves locomotive IDs in this order:
+
+1. MySQL lookup on the same host as WiThrottle (if enabled)
+2. Local `RFID_LOCO_MAP` dictionary in `include/config.h`
+3. Last 4 hex digits of tag UID (normalized to address `1..9999`)
+
+Configure MySQL fields in `include/config.h`:
+
+- `ENABLE_RFID_MYSQL_LOOKUP`
+- `RFID_MYSQL_HOST`
+- `RFID_MYSQL_PORT`
+- `RFID_MYSQL_USER`
+- `RFID_MYSQL_PASS`
+- `RFID_MYSQL_DB`
+- `RFID_MYSQL_TABLE`
+- `RFID_MYSQL_UID_COLUMN`
+- `RFID_MYSQL_LOCO_COLUMN`
+- `RFID_MYSQL_IS_LONG_COLUMN` (optional)
+
+Expected `loco_id` values can be either:
+
+- Prefixed (`S3`, `L128`)
+- Numeric only (`3`, `128`), where `>127` is treated as long address
+
+Use the included sample schema and seed script:
+
+```bash
+mysql -h <server-ip> -u <user> -p < /path/to/dial-throttle/rfid_mysql_schema.sql
+```
+
+### MySQL Verification Checklist
+
+1. In `include/config.h`, set:
+	- `ENABLE_RFID_MYSQL_LOOKUP = true`
+	- `RFID_MYSQL_HOST` to an IP address (same server as WiThrottle)
+	- DB credentials and column names to match your table
+2. Confirm the DB row exists for a test tag UID:
+	- `SELECT loco_id, is_long FROM wifithrottle.rfid_loco_map WHERE rfid_uid='DEADBEEF' LIMIT 1;`
+3. Flash firmware and open serial monitor.
+4. Scan a mapped tag and verify serial shows source `(db)` and status source `RFID-DB`.
+5. Temporarily remove/rename that DB row, scan again, and verify fallback to `(map)` / `RFID-MAP`.
+6. Remove local map entry too, scan again, and verify fallback to `(tail)` / `RFID-TAIL`.
+7. Confirm resulting loco address is in range `1..9999` and acquires in JMRI.
+
+Note: Current firmware expects `RFID_MYSQL_HOST` as a numeric IP string.
 
 
 ## Serial Debug Commands

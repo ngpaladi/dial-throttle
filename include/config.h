@@ -85,6 +85,21 @@ struct RfidLocoMap {
 	bool isLong;
 };
 
+// Optional MySQL lookup for RFID -> loco assignment.
+// Lookup order is: MySQL -> RFID_LOCO_MAP -> last 4 UID hex digits.
+// Leave disabled until credentials and schema are set.
+static const bool ENABLE_RFID_MYSQL_LOOKUP = false;
+static const char* RFID_MYSQL_HOST = WITHROTTLE_HOST;
+static const uint16_t RFID_MYSQL_PORT = 3306;
+static const char* RFID_MYSQL_USER = "dialthrottle";
+static const char* RFID_MYSQL_PASS = "change_me";
+static const char* RFID_MYSQL_DB = "wifithrottle";
+static const char* RFID_MYSQL_TABLE = "rfid_loco_map";
+static const char* RFID_MYSQL_UID_COLUMN = "rfid_uid";
+static const char* RFID_MYSQL_LOCO_COLUMN = "loco_id";
+// Optional long/short column. Set to nullptr to derive long from address (>127).
+static const char* RFID_MYSQL_IS_LONG_COLUMN = nullptr;
+
 // Add your known tag mappings here.
 static const RfidLocoMap RFID_LOCO_MAP[] = {
 		{"DEADBEEF", 3, false},
